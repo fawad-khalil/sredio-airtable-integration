@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, HttpCode } from '@nestjs/common';
+import { Controller, Get, Post, Body, Headers, HttpCode } from '@nestjs/common';
 import { ScraperService } from './scraper.service';
 
 @Controller('scraper')
@@ -7,8 +7,8 @@ export class ScraperController {
 
   @Post('start')
   @HttpCode(202)
-  start() {
-    this.scraperService.startScrape().catch(err => console.error('Scraper error:', err));
+  start(@Headers('x-connection-id') connectionId: string) {
+    this.scraperService.startScrape(connectionId ?? '').catch(err => console.error('Scraper error:', err));
     return { message: 'Scraper started' };
   }
 

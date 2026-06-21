@@ -64,7 +64,7 @@ const COLLECTION_SKIP: Record<string, string[]> = {
 };
 
 function buildColDefs(fields: string[], extraSkip: string[] = []): ColDef[] {
-  const skip = new Set(['__v', '_id', 'baseId', 'tableId', 'airtableId', 'createdAt', 'updatedAt', ...extraSkip]);
+  const skip = new Set(['__v', '_id', 'baseId', 'tableId', 'airtableId', 'connectionId', 'createdAt', 'updatedAt', ...extraSkip]);
   return fields
     .filter((f) => !skip.has(f))
     .map((field) => ({
@@ -273,6 +273,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.route.queryParams.subscribe((params) => {
       if (params['connected'] === 'true') {
+        if (params['connectionId']) {
+          localStorage.setItem('connectionId', params['connectionId']);
+        }
         this.router.navigate([], { queryParams: {} });
         this.snackBar.open('Successfully connected to Airtable!', 'Close', { duration: 4000 });
       } else if (params['error'] === 'auth_cancelled') {

@@ -11,6 +11,15 @@ import { User, UserDocument } from '../../schemas/user.schema';
 const AIRTABLE_BASE = 'https://api.airtable.com/v0';
 const DELAY_MS = 200;
 
+export interface SyncStatusEntry {
+  bases: number;
+  tables: number;
+  tickets: number;
+  users: number;
+  lastSync: string | null;
+  syncing: boolean;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
@@ -18,7 +27,7 @@ function sleep(ms: number): Promise<void> {
 @Injectable()
 export class SyncService {
   private readonly logger = new Logger(SyncService.name);
-  private syncStatus = { bases: 0, tables: 0, tickets: 0, users: 0, lastSync: null as string | null, syncing: false };
+  private readonly syncStatuses = new Map<string, SyncStatusEntry>();
 
   constructor(
     private readonly authService: AuthService,
@@ -28,30 +37,39 @@ export class SyncService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {}
 
-  private get headers() {
-    return { Authorization: `Bearer ${this.authService.getAccessToken()}` };
+  private getStatus(connectionId: string): SyncStatusEntry {
+    if (!this.syncStatuses.has(connectionId)) {
+      this.syncStatuses.set(connectionId, { bases: 0, tables: 0, tickets: 0, users: 0, lastSync: null, syncing: false });
+    }
+    return this.syncStatuses.get(connectionId)!;
   }
 
-  async startSync(): Promise<void> {
-    if (this.syncStatus.syncing) return;
-    this.syncStatus.syncing = true;
+  private async headers(connectionId: string): Promise<{ Authorization: string }> {
+    return { Authorization: `Bearer ${await this.authService.getAccessToken(connectionId)}` };
+  }
+
+  async startSync(connectionId: string): Promise<void> {
+    const status = this.getStatus(connectionId);
+    if (status.syncing) return;
+    status.syncing = true;
     try {
-      await this.syncBases();
-      await this.syncCurrentUser();
-      this.syncStatus.lastSync = new Date().toISOString();
+      await this.syncBases(connectionId);
+      await this.syncCurrentUser(connectionId);
+      status.lastSync = new Date().toISOString();
     } finally {
-      this.syncStatus.syncing = false;
+      status.syncing = false;
     }
   }
 
-  private async syncBases(): Promise<void> {
-    this.logger.log('Syncing bases...');
+  private async syncBases(connectionId: string): Promise<void> {
+    this.logger.log(`[${connectionId}] Syncing bases...`);
+    const h = await this.headers(connectionId);
     let offset: string | undefined;
     const allBases: any[] = [];
     do {
       const params: Record<string, string> = {};
       if (offset) params.offset = offset;
-      const { data } = await axios.get(`${AIRTABLE_BASE}/meta/bases`, { headers: this.headers, params });
+      const { data } = await axios.get(`${AIRTABLE_BASE}/meta/bases`, { headers: h, params });
       allBases.push(...data.bases);
       offset = data.offset;
       if (offset) await sleep(DELAY_MS);
@@ -59,54 +77,58 @@ export class SyncService {
 
     for (const base of allBases) {
       await this.baseModel.updateOne(
-        { airtableId: base.id },
-        { airtableId: base.id, name: base.name, permissionLevel: base.permissionLevel, syncedAt: new Date() },
+        { airtableId: base.id, connectionId },
+        { $set: { airtableId: base.id, connectionId, name: base.name, permissionLevel: base.permissionLevel, syncedAt: new Date() } },
         { upsert: true },
       );
     }
-    this.syncStatus.bases = allBases.length;
-    this.logger.log(`Synced ${allBases.length} bases`);
+    const status = this.getStatus(connectionId);
+    status.bases = allBases.length;
+    this.logger.log(`[${connectionId}] Synced ${allBases.length} bases`);
 
     for (const base of allBases) {
-      await this.syncTables(base.id);
+      await this.syncTables(connectionId, base.id);
       await sleep(DELAY_MS);
     }
   }
 
-  private async syncTables(baseId: string): Promise<void> {
-    const { data } = await axios.get(`${AIRTABLE_BASE}/meta/bases/${baseId}/tables`, { headers: this.headers });
+  private async syncTables(connectionId: string, baseId: string): Promise<void> {
+    const h = await this.headers(connectionId);
+    const { data } = await axios.get(`${AIRTABLE_BASE}/meta/bases/${baseId}/tables`, { headers: h });
     const tables = data.tables ?? [];
 
     for (const table of tables) {
       await this.tableModel.updateOne(
-        { airtableId: table.id },
-        { $set: { airtableId: table.id, baseId, name: table.name, fields: table.fields ?? [], syncedAt: new Date() } },
+        { airtableId: table.id, connectionId },
+        { $set: { airtableId: table.id, connectionId, baseId, name: table.name, fields: table.fields ?? [], syncedAt: new Date() } },
         { upsert: true },
       );
     }
-    this.syncStatus.tables += tables.length;
-    this.logger.log(`Synced ${tables.length} tables for base ${baseId}`);
+    const status = this.getStatus(connectionId);
+    status.tables += tables.length;
+    this.logger.log(`[${connectionId}] Synced ${tables.length} tables for base ${baseId}`);
 
     for (const table of tables) {
-      await this.syncTickets(baseId, table.id, table.name);
+      await this.syncTickets(connectionId, baseId, table.id, table.name);
       await sleep(DELAY_MS);
     }
   }
 
-  private async syncTickets(baseId: string, tableId: string, tableName: string): Promise<void> {
+  private async syncTickets(connectionId: string, baseId: string, tableId: string, tableName: string): Promise<void> {
+    const h = await this.headers(connectionId);
     let offset: string | undefined;
     let count = 0;
     do {
       const params: Record<string, string> = { pageSize: '100' };
       if (offset) params.offset = offset;
-      const { data } = await axios.get(`${AIRTABLE_BASE}/${baseId}/${tableId}`, { headers: this.headers, params });
+      const { data } = await axios.get(`${AIRTABLE_BASE}/${baseId}/${tableId}`, { headers: h, params });
       const records: any[] = data.records ?? [];
 
       if (records.length > 0) {
         const ops = records.map(r => ({
           updateOne: {
-            filter: { airtableId: r.id },
-            update: { $set: { airtableId: r.id, baseId, tableId, tableName, fields: r.fields ?? {}, syncedAt: new Date() } },
+            filter: { airtableId: r.id, connectionId },
+            update: { $set: { airtableId: r.id, connectionId, baseId, tableId, tableName, fields: r.fields ?? {}, syncedAt: new Date() } },
             upsert: true,
           },
         }));
@@ -118,25 +140,27 @@ export class SyncService {
       if (offset) await sleep(DELAY_MS);
     } while (offset);
 
-    this.syncStatus.tickets += count;
-    this.logger.log(`Synced ${count} tickets for table ${tableName}`);
+    const status = this.getStatus(connectionId);
+    status.tickets += count;
+    this.logger.log(`[${connectionId}] Synced ${count} tickets for table ${tableName}`);
   }
 
-  private async syncCurrentUser(): Promise<void> {
+  private async syncCurrentUser(connectionId: string): Promise<void> {
     try {
-      const { data } = await axios.get(`${AIRTABLE_BASE}/meta/whoami`, { headers: this.headers });
+      const h = await this.headers(connectionId);
+      const { data } = await axios.get(`${AIRTABLE_BASE}/meta/whoami`, { headers: h });
       await this.userModel.updateOne(
-        { airtableId: data.id },
-        { airtableId: data.id, email: data.email ?? '', name: data.name ?? data.email ?? 'Unknown', syncedAt: new Date() },
+        { airtableId: data.id, connectionId },
+        { $set: { airtableId: data.id, connectionId, email: data.email ?? '', name: data.name ?? data.email ?? 'Unknown', syncedAt: new Date() } },
         { upsert: true },
       );
-      this.syncStatus.users = 1;
+      this.getStatus(connectionId).users = 1;
     } catch (err) {
-      this.logger.warn('Could not sync user: ' + (err as Error).message);
+      this.logger.warn(`[${connectionId}] Could not sync user: ${(err as Error).message}`);
     }
   }
 
-  getStatus() {
-    return { ...this.syncStatus };
+  getStatusForConnection(connectionId: string): SyncStatusEntry {
+    return { ...this.getStatus(connectionId) };
   }
 }

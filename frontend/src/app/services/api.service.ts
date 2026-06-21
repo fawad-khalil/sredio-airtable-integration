@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpHeaders, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
 
@@ -14,16 +14,25 @@ export class ApiService {
 
   constructor(private readonly http: HttpClient) {}
 
+  private get connHeaders(): { headers: HttpHeaders } {
+    const id = localStorage.getItem('connectionId') ?? '';
+    return { headers: new HttpHeaders({ 'X-Connection-Id': id }) };
+  }
+
   getAuthStatus(): Observable<{ connected: boolean }> {
-    return this.http.get<{ connected: boolean }>(`${this.api}/auth/airtable/status`);
+    const id = localStorage.getItem('connectionId') ?? '';
+    return this.http.get<{ connected: boolean }>(
+      `${this.api}/auth/airtable/status`,
+      { params: new HttpParams().set('connectionId', id) },
+    );
   }
 
   getSyncStatus(): Observable<SyncStatus> {
-    return this.http.get<SyncStatus>(`${this.api}/sync/status`);
+    return this.http.get<SyncStatus>(`${this.api}/sync/status`, this.connHeaders);
   }
 
   startSync(): Observable<{ message: string }> {
-    return this.http.post<{ message: string }>(`${this.api}/sync/start`, {});
+    return this.http.post<{ message: string }>(`${this.api}/sync/start`, {}, this.connHeaders);
   }
 
   getScraperStatus(): Observable<ScraperStatus> {
@@ -31,7 +40,7 @@ export class ApiService {
   }
 
   startScraper(): Observable<{ message: string }> {
-    return this.http.post<{ message: string }>(`${this.api}/scraper/start`, {});
+    return this.http.post<{ message: string }>(`${this.api}/scraper/start`, {}, this.connHeaders);
   }
 
   submitMfaCode(code: string): Observable<{ message: string }> {
@@ -43,7 +52,7 @@ export class ApiService {
   }
 
   getCollections(): Observable<Collection[]> {
-    return this.http.get<Collection[]>(`${this.api}/collections`);
+    return this.http.get<Collection[]>(`${this.api}/collections`, this.connHeaders);
   }
 
   getCollectionData(
@@ -56,6 +65,9 @@ export class ApiService {
       .set('search', params.search);
     if (params.filterField) httpParams = httpParams.set('filterField', params.filterField);
     if (params.filterValue) httpParams = httpParams.set('filterValue', params.filterValue);
-    return this.http.get<CollectionData>(`${this.api}/collections/${name}`, { params: httpParams });
+    return this.http.get<CollectionData>(
+      `${this.api}/collections/${name}`,
+      { ...this.connHeaders, params: httpParams },
+    );
   }
 }

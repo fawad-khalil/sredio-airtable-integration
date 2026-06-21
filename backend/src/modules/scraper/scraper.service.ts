@@ -43,6 +43,7 @@ export class ScraperService {
   private progress = { current: 0, total: 0 };
   private message = '';
   private cookies: string = '';
+  private connectionId: string = '';
   private mfaResolver: ((code: string) => void) | null = null;
 
   constructor(
@@ -72,18 +73,17 @@ export class ScraperService {
     }
   }
 
-  async startScrape(): Promise<void> {
+  async startScrape(connectionId: string): Promise<void> {
     if (this.state !== 'idle' && this.state !== 'complete' && this.state !== 'error') return;
+    this.connectionId = connectionId;
     this.progress = { current: 0, total: 0 };
 
     try {
-      // Re-validate existing cookies first — skip browser if still valid
       if (this.cookies) {
         const isValid = await this.validateCookies();
         if (!isValid) this.cookies = '';
       }
 
-      // Launch visible browser so user can log in with any method (Google, SSO, email)
       if (!this.cookies) {
         this.state = 'extracting_cookies';
         this.message = 'Opening browser for Airtable login...';
@@ -117,7 +117,6 @@ export class ScraperService {
       this.state = 'awaiting_login';
       this.message = "Browser opened. Please log in to Airtable (Google, email, or SSO). The scraper will continue automatically once you're logged in.";
 
-      // Wait up to 5 minutes for the user to complete login
       await page.waitForFunction(
         () => !window.location.href.includes('/login') && !window.location.href.includes('/sso'),
         { timeout: 300000 },
@@ -143,8 +142,9 @@ export class ScraperService {
   private async validateCookies(): Promise<boolean> {
     if (!this.cookies) return false;
     try {
-      const ticket = await this.ticketModel.findOne().lean();
-      if (!ticket) return true; // no tickets to test against, assume valid
+      const filter = this.connectionId ? { connectionId: this.connectionId } : {};
+      const ticket = await this.ticketModel.findOne(filter).lean();
+      if (!ticket) return true;
       const url = `https://airtable.com/v0.3/row/${ticket.airtableId}/readRowActivitiesAndComments`;
       const resp = await axios.get(url, {
         headers: { Cookie: this.cookies, 'User-Agent': 'Mozilla/5.0' },
@@ -158,7 +158,8 @@ export class ScraperService {
   }
 
   private async scrapeAllTickets(): Promise<void> {
-    const tickets = await this.ticketModel.find().lean();
+    const filter = this.connectionId ? { connectionId: this.connectionId } : {};
+    const tickets = await this.ticketModel.find(filter).lean();
     this.state = 'scraping';
     this.progress = { current: 0, total: tickets.length };
     this.message = `Scraping revision history for ${tickets.length} tickets...`;
@@ -200,7 +201,6 @@ export class ScraperService {
   private parseRevisionHistory(html: string, ticketId: string): any[] {
     const entries: any[] = [];
 
-    // Try JSON response first (Airtable may return JSON)
     try {
       const json = typeof html === 'string' ? JSON.parse(html) : html;
       const activities = json.activities || (json.data && json.data.activities) || [];
@@ -209,6 +209,7 @@ export class ScraperService {
         if (!['Assignee', 'Status', 'assignee', 'status'].includes(columnType)) continue;
         entries.push({
           uuid: activity.id || activity.activityId || `${ticketId}-${Date.now()}`,
+          connectionId: this.connectionId,
           issueId: ticketId,
           columnType,
           oldValue: activity.oldValue ?? '',
@@ -223,7 +224,6 @@ export class ScraperService {
       // Not JSON, parse HTML with Cheerio
     }
 
-    // Parse HTML structure
     const $ = cheerio.load(html);
     $('[data-activity-id], .activityItem, .historyItem, [class*="activity"], [class*="history"]').each((_, el) => {
       const activityId = $(el).attr('data-activity-id') || $(el).attr('data-id') || `${ticketId}-${Date.now()}-${Math.random()}`;
@@ -241,6 +241,7 @@ export class ScraperService {
 
       entries.push({
         uuid: activityId,
+        connectionId: this.connectionId,
         issueId: ticketId,
         columnType,
         oldValue: oldValueEl.text().trim() || '',
@@ -257,7 +258,7 @@ export class ScraperService {
   private async upsertRevisionEntries(entries: any[]): Promise<void> {
     const ops = entries.map(e => ({
       updateOne: {
-        filter: { uuid: e.uuid },
+        filter: { uuid: e.uuid, connectionId: e.connectionId },
         update: { $set: e },
         upsert: true,
       },

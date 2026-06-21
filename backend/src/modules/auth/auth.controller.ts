@@ -28,15 +28,15 @@ export class AuthController {
       return res.redirect(`${frontendUrl}/?error=auth_cancelled`);
     }
     try {
-      await this.authService.exchangeCode(code, state);
-      res.redirect(`${frontendUrl}/?connected=true`);
+      const { connectionId } = await this.authService.exchangeCode(code, state);
+      res.redirect(`${frontendUrl}/?connected=true&connectionId=${connectionId}`);
     } catch (err) {
       res.redirect(`${frontendUrl}/?error=auth_failed`);
     }
   }
 
   @Get('status')
-  status() {
-    return { connected: this.authService.isConnected() };
+  async status(@Query('connectionId') id: string) {
+    return { connected: await this.authService.isConnected(id ?? '') };
   }
 }

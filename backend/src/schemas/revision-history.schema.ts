@@ -5,7 +5,8 @@ export type RevisionHistoryDocument = RevisionHistory & Document;
 
 @Schema({ timestamps: true })
 export class RevisionHistory {
-  @Prop({ required: true, unique: true }) uuid: string;
+  @Prop({ required: true }) uuid: string;
+  @Prop({ required: true, index: true }) connectionId: string;
   @Prop({ required: true }) issueId: string;
   @Prop() columnType: string;
   @Prop() oldValue: string;
@@ -16,3 +17,4 @@ export class RevisionHistory {
 }
 
 export const RevisionHistorySchema = SchemaFactory.createForClass(RevisionHistory);
+RevisionHistorySchema.index({ uuid: 1, connectionId: 1 }, { unique: true });

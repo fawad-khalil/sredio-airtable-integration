@@ -1,33 +1,34 @@
 import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
+import { Model } from 'mongoose';
 import * as crypto from 'crypto';
-import * as fs from 'fs';
-import * as path from 'path';
 import axios from 'axios';
+import { OAuthToken, OAuthTokenDocument } from '../../schemas/oauth-token.schema';
 
-interface AirtableTokens {
+interface AirtableTokenResponse {
   access_token: string;
   refresh_token: string;
   token_type: string;
   expires_in: number;
   scope: string;
-  created_at: number;
 }
 
 @Injectable()
 export class AuthService {
-  private readonly pkceStore = new Map<string, string>(); // state -> code_verifier
-  private readonly tokensPath = path.join(process.cwd(), 'data', 'tokens.json');
+  private readonly pkceStore = new Map<string, { codeVerifier: string; connectionId: string }>();
 
-  constructor(private readonly config: ConfigService) {
-    fs.mkdirSync(path.dirname(this.tokensPath), { recursive: true });
-  }
+  constructor(
+    private readonly config: ConfigService,
+    @InjectModel(OAuthToken.name) private readonly oauthTokenModel: Model<OAuthTokenDocument>,
+  ) {}
 
   generateAuthUrl(): { url: string; state: string } {
     const codeVerifier = crypto.randomBytes(32).toString('base64url');
     const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
     const state = crypto.randomBytes(16).toString('hex');
-    this.pkceStore.set(state, codeVerifier);
+    const connectionId = crypto.randomUUID();
+    this.pkceStore.set(state, { codeVerifier, connectionId });
 
     const params = new URLSearchParams({
       response_type: 'code',
@@ -42,16 +43,17 @@ export class AuthService {
     return { url: `https://airtable.com/oauth2/v1/authorize?${params}`, state };
   }
 
-  async exchangeCode(code: string, state: string): Promise<AirtableTokens> {
-    const codeVerifier = this.pkceStore.get(state);
-    if (!codeVerifier) throw new Error('Invalid state parameter');
+  async exchangeCode(code: string, state: string): Promise<{ connectionId: string }> {
+    const entry = this.pkceStore.get(state);
+    if (!entry) throw new Error('Invalid state parameter');
     this.pkceStore.delete(state);
 
+    const { codeVerifier, connectionId } = entry;
     const clientId = this.config.get('AIRTABLE_CLIENT_ID', '');
     const clientSecret = this.config.get('AIRTABLE_CLIENT_SECRET', '');
     const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
 
-    const { data } = await axios.post<AirtableTokens>(
+    const { data } = await axios.post<AirtableTokenResponse>(
       'https://airtable.com/oauth2/v1/token',
       new URLSearchParams({
         grant_type: 'authorization_code',
@@ -63,9 +65,23 @@ export class AuthService {
       { headers: { Authorization: `Basic ${credentials}`, 'Content-Type': 'application/x-www-form-urlencoded' } },
     );
 
-    const tokens = { ...data, created_at: Date.now() };
-    fs.writeFileSync(this.tokensPath, JSON.stringify(tokens, null, 2));
-    return tokens;
+    await this.oauthTokenModel.updateOne(
+      { connectionId },
+      {
+        $set: {
+          connectionId,
+          accessToken: data.access_token,
+          refreshToken: data.refresh_token,
+          tokenType: data.token_type,
+          expiresIn: data.expires_in,
+          scope: data.scope,
+          tokenCreatedAt: Date.now(),
+        },
+      },
+      { upsert: true },
+    );
+
+    return { connectionId };
   }
 
   private getRedirectUri(): string {
@@ -74,24 +90,17 @@ export class AuthService {
     return `${backendUrl}/auth/airtable/callback`;
   }
 
-  getTokens(): AirtableTokens | null {
-    try {
-      return JSON.parse(fs.readFileSync(this.tokensPath, 'utf-8'));
-    } catch {
-      return null;
-    }
+  async getAccessToken(connectionId: string): Promise<string> {
+    const token = await this.oauthTokenModel.findOne({ connectionId }).lean();
+    if (!token) throw new Error('Not authenticated with Airtable');
+    return token.accessToken;
   }
 
-  isConnected(): boolean {
-    const tokens = this.getTokens();
-    if (!tokens) return false;
-    const expiresAt = tokens.created_at + tokens.expires_in * 1000;
+  async isConnected(connectionId: string): Promise<boolean> {
+    if (!connectionId) return false;
+    const token = await this.oauthTokenModel.findOne({ connectionId }).lean();
+    if (!token) return false;
+    const expiresAt = token.tokenCreatedAt + token.expiresIn * 1000;
     return Date.now() < expiresAt - 60000;
-  }
-
-  getAccessToken(): string {
-    const tokens = this.getTokens();
-    if (!tokens) throw new Error('Not authenticated with Airtable');
-    return tokens.access_token;
   }
 }

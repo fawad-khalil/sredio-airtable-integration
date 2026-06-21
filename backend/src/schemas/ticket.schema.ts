@@ -5,7 +5,8 @@ export type TicketDocument = Ticket & Document;
 
 @Schema({ strict: false, timestamps: true })
 export class Ticket {
-  @Prop({ required: true, unique: true }) airtableId: string;
+  @Prop({ required: true }) airtableId: string;
+  @Prop({ required: true, index: true }) connectionId: string;
   @Prop({ required: true }) baseId: string;
   @Prop({ required: true }) tableId: string;
   @Prop() tableName: string;
@@ -14,3 +15,4 @@ export class Ticket {
 }
 
 export const TicketSchema = SchemaFactory.createForClass(Ticket);
+TicketSchema.index({ airtableId: 1, connectionId: 1 }, { unique: true });
