@@ -1,0 +1,40 @@
+@import '@angular/material/prebuilt-themes/azure-blue.css';
+
+html, body {
+  height: 100%;
+  margin: 0;
+  font-family: Roboto, "Helvetica Neue", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+.ag-theme-quartz {
+  --ag-header-background-color: #1565c0;
+  --ag-header-foreground-color: #ffffff;
+  --ag-border-color: #e0e0e0;
+  --ag-row-hover-color: #e3f2fd;
+  --ag-row-height: 52px;
+  --ag-cell-horizontal-padding: 16px;
+  --ag-font-size: 13px;
+  --ag-header-height: 48px;
+}
+
+.ag-theme-quartz .ag-row {
+  cursor: pointer;
+}
+
+.ag-theme-quartz .ag-row-odd {
+  background-color: #fafafa;
+}
+
+.ag-tooltip {
+  background-color: #333 !important;
+  color: #fff !important;
+  border: none !important;
+  border-radius: 4px !important;
+  padding: 6px 10px !important;
+  font-size: 0.8rem !important;
+  max-width: 360px;
+  word-break: break-all;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}

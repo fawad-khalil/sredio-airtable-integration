@@ -1,0 +1,199 @@
+<div class="dashboard-container">
+  <!-- Toolbar -->
+  <mat-toolbar color="primary" class="app-toolbar">
+    <span class="toolbar-title">
+      <mat-icon>integration_instructions</mat-icon>
+      Airtable Integration Dashboard
+    </span>
+    <span class="spacer"></span>
+    <span class="connection-status" [class.connected]="connected()">
+      <mat-icon>{{ connected() ? 'check_circle' : 'error_outline' }}</mat-icon>
+      {{ connected() ? 'Connected' : 'Not Connected' }}
+    </span>
+    <button mat-icon-button (click)="showSyncPanel.set(!showSyncPanel())" matTooltip="Sync & Scraper Panel">
+      <mat-icon>sync</mat-icon>
+    </button>
+  </mat-toolbar>
+
+  <!-- Breadcrumb drill-down bar -->
+  <div class="breadcrumb-bar" *ngIf="breadcrumb().length > 0">
+    <ng-container *ngFor="let item of breadcrumb(); let i = index">
+      <button class="bc-chip" (click)="navigateToBreadcrumb(i)">{{ item.label }}</button>
+      <mat-icon class="bc-sep">chevron_right</mat-icon>
+    </ng-container>
+    <span class="bc-current">{{ formatCollection(selectedCollection()) }}</span>
+  </div>
+
+  <div class="main-layout">
+    <!-- Sync Panel (side drawer) -->
+    <div class="sync-panel" *ngIf="showSyncPanel()">
+      <mat-card class="panel-card">
+        <mat-card-header>
+          <mat-card-title>Airtable Sync</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          <button mat-raised-button color="primary" (click)="connectAirtable()" *ngIf="!connected()" class="full-width mb-8">
+            <mat-icon>link</mat-icon> Connect Airtable
+          </button>
+          <button mat-raised-button color="primary" (click)="startSync()" *ngIf="connected()" class="full-width mb-8">
+            <mat-icon>sync</mat-icon> Sync Now
+          </button>
+
+          <div class="status-grid" *ngIf="syncStatus()">
+            <div class="stat"><span class="label">Bases</span><span class="value">{{ syncStatus()?.bases }}</span></div>
+            <div class="stat"><span class="label">Tables</span><span class="value">{{ syncStatus()?.tables }}</span></div>
+            <div class="stat"><span class="label">Tickets</span><span class="value">{{ syncStatus()?.tickets }}</span></div>
+            <div class="stat"><span class="label">Users</span><span class="value">{{ syncStatus()?.users }}</span></div>
+          </div>
+          <p class="last-sync" *ngIf="syncStatus()?.lastSync">
+            Last sync: {{ syncStatus()?.lastSync | date:'short' }}
+          </p>
+          <mat-divider class="my-12"></mat-divider>
+
+          <!-- Scraper Section -->
+          <mat-card-title class="mb-8">Revision History</mat-card-title>
+          <button mat-raised-button color="accent" (click)="startScraper()" class="full-width mb-8">
+            <mat-icon>history</mat-icon> Scrape Revisions
+          </button>
+
+          <div class="scraper-status" *ngIf="scraperStatus()">
+            <div class="state-chip" [class]="'state-' + scraperStatus()?.state">
+              {{ scraperStatus()?.state }}
+            </div>
+            <p class="scraper-message">{{ scraperStatus()?.message }}</p>
+            <mat-progress-bar
+              *ngIf="scraperStatus()?.state === 'scraping'"
+              mode="determinate"
+              [value]="(scraperStatus()!.progress.current / scraperStatus()!.progress.total) * 100">
+            </mat-progress-bar>
+            <p class="progress-text" *ngIf="scraperStatus()?.state === 'scraping'">
+              {{ scraperStatus()?.progress?.current }} / {{ scraperStatus()?.progress?.total }}
+            </p>
+          </div>
+
+          <!-- MFA Card -->
+          <mat-card class="mfa-card" *ngIf="scraperStatus()?.state === 'awaiting_mfa'">
+            <mat-card-header>
+              <mat-card-title>
+                <mat-icon color="warn">lock</mat-icon> MFA Required
+              </mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+              <p>Enter the 6-digit code from your authenticator app:</p>
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>MFA Code</mat-label>
+                <input matInput [ngModel]="mfaCode()" (ngModelChange)="mfaCode.set($event)"
+                       placeholder="000000" maxlength="6" pattern="[0-9]{6}">
+              </mat-form-field>
+              <button mat-raised-button color="primary" (click)="submitMfa()" class="full-width">
+                Submit Code
+              </button>
+            </mat-card-content>
+          </mat-card>
+
+          <!-- Cookie Fallback Card (Google/SSO accounts only) -->
+          <mat-card class="cookie-card" *ngIf="!scraperStatus()?.hasCookies">
+            <mat-card-header>
+              <mat-card-title>
+                <mat-icon>cookie</mat-icon> Alternative: Manual Cookies
+              </mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+              <p class="cookie-hint">
+                <strong>For Google/SSO accounts only.</strong> If <code>AIRTABLE_EMAIL</code> + <code>AIRTABLE_PASSWORD</code> are set in <code>.env</code>, cookies are retrieved automatically via Puppeteer — skip this.<br><br>
+                Otherwise, paste your Airtable cookie header value below.<br>
+                <small>DevTools → Network → any airtable.com request → Request Headers → Cookie</small>
+              </p>
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Cookie string</mat-label>
+                <textarea matInput [ngModel]="cookieString()" (ngModelChange)="cookieString.set($event)"
+                          rows="3" placeholder="brw=xxx; AWSALB=xxx; ..."></textarea>
+              </mat-form-field>
+              <button mat-stroked-button color="primary" (click)="submitCookies()" class="full-width"
+                      [disabled]="!cookieString()">
+                <mat-icon>check</mat-icon> Save Cookies
+              </button>
+            </mat-card-content>
+          </mat-card>
+        </mat-card-content>
+      </mat-card>
+    </div>
+
+    <!-- Main Content -->
+    <div class="content-area">
+      <!-- Filter Bar -->
+      <div class="filter-bar">
+        <mat-form-field appearance="outline" class="filter-field">
+          <mat-label>Integration</mat-label>
+          <mat-select [(value)]="selectedIntegration">
+            <mat-option *ngFor="let i of integrations" [value]="i">{{ i }}</mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="filter-field">
+          <mat-label>Entity (Collection)</mat-label>
+          <mat-select [value]="selectedCollection()" (selectionChange)="onCollectionChange($event.value)">
+            <mat-option *ngFor="let col of collections()" [value]="col.name">
+              {{ col.name }} ({{ col.count }})
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="search-field">
+          <mat-label>Search</mat-label>
+          <input matInput [formControl]="searchControl" placeholder="Search records...">
+          <mat-icon matSuffix>search</mat-icon>
+        </mat-form-field>
+
+        <button mat-icon-button (click)="loadCollectionData()" matTooltip="Refresh" color="primary">
+          <mat-icon>refresh</mat-icon>
+        </button>
+      </div>
+
+      <!-- Loading / Empty State -->
+      <div class="loading-overlay" *ngIf="loading()">
+        <mat-spinner diameter="48"></mat-spinner>
+        <p>Loading data...</p>
+      </div>
+
+      <div class="empty-state" *ngIf="!loading() && !selectedCollection()">
+        <mat-icon class="empty-icon">table_chart</mat-icon>
+        <h3>Select a collection to view data</h3>
+        <p>Choose an entity from the dropdown above, or sync Airtable data first.</p>
+        <button mat-raised-button color="primary" (click)="connectAirtable()" *ngIf="!connected()">
+          <mat-icon>link</mat-icon> Connect Airtable
+        </button>
+      </div>
+
+      <!-- AG Grid -->
+      <div class="grid-container" *ngIf="!loading() && selectedCollection()">
+        <ag-grid-angular
+          class="ag-theme-quartz"
+          [rowData]="rowData()"
+          [columnDefs]="colDefs()"
+          [pagination]="false"
+          [animateRows]="true"
+          [defaultColDef]="{ sortable: true, filter: true, resizable: true }"
+          [getRowStyle]="rowStyleFn"
+          (gridReady)="onGridReady($event)"
+          (rowClicked)="onRowClicked($event)"
+          style="width: 100%; height: 100%; cursor: pointer;">
+        </ag-grid-angular>
+      </div>
+
+      <!-- Pagination -->
+      <div class="pagination-bar" *ngIf="selectedCollection() && totalRecords() > 0">
+        <span class="total-info">{{ totalRecords() }} records</span>
+        <div class="page-controls">
+          <button mat-icon-button [disabled]="currentPage() === 1" (click)="prevPage()">
+            <mat-icon>chevron_left</mat-icon>
+          </button>
+          <span class="page-info">Page {{ currentPage() }} of {{ totalPages }}</span>
+          <button mat-icon-button [disabled]="currentPage() >= totalPages" (click)="nextPage()">
+            <mat-icon>chevron_right</mat-icon>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

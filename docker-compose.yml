@@ -1,0 +1,30 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: airtable-dashboard
+
+  backend:
+    build: { context: ./backend, dockerfile: Dockerfile }
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on: [mongo]
+    env_file: ./backend/.env
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/airtable-dashboard
+
+  frontend:
+    build: { context: ./frontend, dockerfile: Dockerfile }
+    restart: unless-stopped
+    ports:
+      - "4200:80"
+    depends_on: [backend]
+
+volumes:
+  mongo_data:
