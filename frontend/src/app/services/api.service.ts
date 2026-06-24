@@ -5,6 +5,8 @@ export interface Collection { name: string; count: number; }
 export interface CollectionData { data: Record<string, unknown>[]; total: number; fields: string[]; }
 export interface SyncStatus { bases: number; tables: number; tickets: number; users: number; lastSync: string | null; syncing: boolean; }
 export interface ScraperStatus { state: string; progress: { current: number; total: number }; message: string; hasCookies: boolean; mfaPrompts?: number; }
+export interface ChartPoint { key: string; count: number; }
+export interface TimelinePoint { date: string; count: number; }
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
@@ -53,6 +55,18 @@ export class ApiService {
 
   getCollections(): Observable<Collection[]> {
     return this.http.get<Collection[]>(`${this.api}/collections`);
+  }
+
+  getStats(name: string, groupBy: string): Observable<ChartPoint[]> {
+    return this.http.get<ChartPoint[]>(`${this.api}/collections/${name}/stats`, {
+      params: new HttpParams().set('groupBy', groupBy),
+    });
+  }
+
+  getTimeline(name: string, dateField = 'createdDate'): Observable<TimelinePoint[]> {
+    return this.http.get<TimelinePoint[]>(`${this.api}/collections/${name}/timeline`, {
+      params: new HttpParams().set('dateField', dateField),
+    });
   }
 
   getCollectionData(

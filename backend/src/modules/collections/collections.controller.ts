@@ -10,6 +10,16 @@ export class CollectionsController {
     return this.collectionsService.listCollections();
   }
 
+  @Get(':name/stats')
+  getStats(@Param('name') name: string, @Query('groupBy') groupBy = '') {
+    return this.collectionsService.getStats(name, groupBy);
+  }
+
+  @Get(':name/timeline')
+  getTimeline(@Param('name') name: string, @Query('dateField') dateField = 'createdDate') {
+    return this.collectionsService.getTimeline(name, dateField);
+  }
+
   @Get(':name')
   getCollection(
     @Param('name') name: string,

@@ -11,6 +11,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatDialog, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { AgGridAngular } from 'ag-grid-angular';
 import {
@@ -38,6 +39,8 @@ import { RecordDetailDialogComponent } from './record-detail-dialog.component';
 import { ScraperLoginDialogComponent, ScraperLoginResult } from './scraper-login-dialog.component';
 import { MfaDialogComponent } from './mfa-dialog.component';
 import { SyncPanelComponent } from './sync-panel.component';
+import { ChartsPanelComponent } from './charts-panel.component';
+import { STATUS_COLORS } from './status-colors';
 
 interface BreadcrumbItem {
   label: string;
@@ -55,15 +58,6 @@ function toHeaderName(field: string): string {
     .replace(/^./, (s) => s.toUpperCase())
     .trim();
 }
-
-const STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
-  'to do': { bg: '#eceff1', fg: '#455a64' },
-  'not started': { bg: '#eceff1', fg: '#455a64' },
-  'in progress': { bg: '#fff3e0', fg: '#e65100' },
-  'in review': { bg: '#ede7f6', fg: '#5e35b1' },
-  'blocked': { bg: '#ffebee', fg: '#c62828' },
-  'done': { bg: '#e8f5e9', fg: '#2e7d32' },
-};
 
 function escapeHtml(s: string): string {
   return s.replace(
@@ -100,13 +94,13 @@ function buildColDefs(fields: string[]): ColDef[] {
       minWidth: 100,
       flex: 1,
       ...(field === 'Status' ? { cellRenderer: statusCellRenderer } : {}),
-      tooltipValueGetter: (p: { value: any }) => {
+      tooltipValueGetter: (p: { value?: any }) => {
         const v = p.value;
         return typeof v === 'object' && v !== null
           ? JSON.stringify(v)
           : String(v ?? '');
       },
-      valueFormatter: (p: { value:any }) => {
+      valueFormatter: (p: { value?: any }) => {
         const v = p.value;
         if (v === null || v === undefined) return '';
         if (typeof v === 'object') return JSON.stringify(v);
@@ -130,10 +124,12 @@ function buildColDefs(fields: string[]): ColDef[] {
     MatProgressSpinnerModule,
     MatSnackBarModule,
     MatTooltipModule,
+    MatButtonToggleModule,
     MatDialogModule,
     AgGridAngular,
-    MfaDialogComponent,
+    // MfaDialogComponent,
     SyncPanelComponent,
+    ChartsPanelComponent,
   ],
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.scss',
@@ -150,6 +146,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   currentPage = signal(1);
   pageSize = signal(100);
   showSyncPanel = signal(false);
+  viewMode = signal<'table' | 'charts'>('table');
   syncStatus = signal<SyncStatus | null>(null);
   scraperStatus = signal<ScraperStatus | null>(null);
   loginMethod = signal<'credentials' | 'browser'>('credentials');

@@ -67,6 +67,42 @@ export class CollectionsService {
     return { data, total, fields };
   }
 
+  /** Count records grouped by a single field. For `tickets` the value lives under the nested `fields` map. */
+  async getStats(name: string, groupBy: string): Promise<{ key: string; count: number }[]> {
+    const field = this.sanitizeField(groupBy);
+    if (!field) return [];
+    const path = name === 'tickets' ? `fields.${field}` : field;
+    const rows = await this.connection.db
+      .collection(name)
+      .aggregate([
+        { $group: { _id: `$${path}`, count: { $sum: 1 } } },
+        { $match: { _id: { $ne: null } } },
+        { $sort: { count: -1 } },
+      ])
+      .toArray();
+    return rows.map(r => ({ key: String(r._id), count: r.count as number }));
+  }
+
+  /** Count records per day, bucketed on a date field (default `createdDate`). */
+  async getTimeline(name: string, dateField = 'createdDate'): Promise<{ date: string; count: number }[]> {
+    const field = this.sanitizeField(dateField);
+    if (!field) return [];
+    const rows = await this.connection.db
+      .collection(name)
+      .aggregate([
+        { $match: { [field]: { $ne: null } } },
+        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: `$${field}` } }, count: { $sum: 1 } } },
+        { $sort: { _id: 1 } },
+      ])
+      .toArray();
+    return rows.map(r => ({ date: String(r._id), count: r.count as number }));
+  }
+
+  /** Only allow plain field names — these are interpolated into aggregation field paths. */
+  private sanitizeField(field: string): string {
+    return /^[A-Za-z0-9_]+$/.test(field) ? field : '';
+  }
+
   private extractFields(docs: Record<string, unknown>[]): string[] {
     const fieldSet = new Set<string>();
     for (const doc of docs.slice(0, 20)) {

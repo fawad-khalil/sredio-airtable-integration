@@ -74,8 +74,26 @@
         >
           <mat-icon>refresh</mat-icon>
         </button>
+
+        <mat-button-toggle-group
+          class="view-toggle"
+          [value]="viewMode()"
+          (change)="viewMode.set($event.value)"
+          hideSingleSelectionIndicator
+        >
+          <mat-button-toggle value="table" matTooltip="Table view">
+            <mat-icon>table_chart</mat-icon>
+          </mat-button-toggle>
+          <mat-button-toggle value="charts" matTooltip="Charts view">
+            <mat-icon>insights</mat-icon>
+          </mat-button-toggle>
+        </mat-button-toggle-group>
       </div>
 
+      <!-- Charts view -->
+      <app-charts-panel *ngIf="viewMode() === 'charts'"></app-charts-panel>
+
+      <ng-container *ngIf="viewMode() === 'table'">
       <!-- Loading / Empty State -->
       <div class="loading-overlay" *ngIf="loading()">
         <mat-spinner diameter="48"></mat-spinner>
@@ -145,6 +163,7 @@
           </button>
         </div>
       </div>
+      </ng-container>
     </div>
 
     <!-- Sync Panel (side drawer) -->

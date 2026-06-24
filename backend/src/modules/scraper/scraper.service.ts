@@ -82,7 +82,8 @@ export class ScraperService implements OnModuleInit {
     ttlSeconds = this.cookieTtlFallback,
   ): Promise<void> {
     const key = this.cookieKey(connectionId);
-    if (value) await this.redis.set(key, value.trim(), 'EX', Math.max(1, ttlSeconds));
+    const ttl = Math.max(1, Math.floor(ttlSeconds));
+    if (value) await this.redis.set(key, value.trim(), 'EX', ttl);
     else await this.redis.del(key);
   }
 
@@ -90,7 +91,7 @@ export class ScraperService implements OnModuleInit {
   private cookiesTtl(cookies: { expires?: number }[]): number {
     const now = Math.floor(Date.now() / 1000);
     const maxExpires = Math.max(0, ...cookies.map(c => c.expires ?? 0));
-    const ttl = maxExpires - now;
+    const ttl = Math.floor(maxExpires - now);
     return ttl > 0 ? ttl : this.cookieTtlFallback;
   }
 
