@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "mcp__claude_ai_ClickUp__clickup_update_task",
-      "mcp__claude_ai_ClickUp__clickup_create_task"
-    ]
-  }
-}
