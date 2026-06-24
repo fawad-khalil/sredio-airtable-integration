@@ -6,7 +6,6 @@ export type TableDocument = Table & Document;
 @Schema({ timestamps: true })
 export class Table {
   @Prop({ required: true }) airtableId: string;
-  @Prop({ required: true, index: true }) connectionId: string;
   @Prop({ required: true }) baseId: string;
   @Prop({ required: true }) name: string;
   @Prop({ type: [Object] }) fields: { id: string; name: string; type: string }[];
@@ -14,4 +13,4 @@ export class Table {
 }
 
 export const TableSchema = SchemaFactory.createForClass(Table);
-TableSchema.index({ airtableId: 1, connectionId: 1 }, { unique: true });
+TableSchema.index({ airtableId: 1 }, { unique: true });

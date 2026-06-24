@@ -14,10 +14,11 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
-    depends_on: [mongo]
+    depends_on: [mongo, redis]
     env_file: ./backend/.env
     environment:
       MONGODB_URI: mongodb://mongo:27017/airtable-dashboard
+      REDIS_URL: redis://redis:6379 # add this line
 
   frontend:
     build: { context: ./frontend, dockerfile: Dockerfile }
@@ -26,5 +27,14 @@ services:
       - "4200:80"
     depends_on: [backend]
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
 volumes:
   mongo_data:
+  redis_data:

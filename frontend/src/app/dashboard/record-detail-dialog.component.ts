@@ -14,6 +14,14 @@ export interface RecordDetailData {
   fromDialog?: boolean;
 }
 
+interface RevisionEntry {
+  columnType: string;
+  oldValue: string;
+  newValue: string;
+  createdDate: string;
+  authoredBy: string;
+}
+
 const LABEL_MAP: Record<string, string> = {
   airtableId: 'Airtable ID',
   baseId: 'Base ID',
@@ -300,6 +308,36 @@ function buildEntries(
         </ng-container>
 
       </div>
+
+      <!-- Revision History (tasks and bugs only) -->
+      <ng-container *ngIf="recordType === 'bug' || recordType === 'task'">
+        <div class="revision-section">
+          <div class="revision-header">
+            <span>Revision History</span>
+            <mat-spinner *ngIf="loadingRevisions()" diameter="14"></mat-spinner>
+          </div>
+          <div class="revision-scroll">
+            <div *ngIf="!loadingRevisions() && revisionHistory().length === 0" class="revision-empty">
+              No revision history
+            </div>
+            <div *ngFor="let entry of revisionHistory()" class="revision-entry">
+              <span class="revision-main">
+                <ng-container *ngIf="entry.columnType?.toLowerCase() === 'assignee'">
+                  <span class="rev-author">{{ resolveUser(entry.authoredBy) }}</span> changed Assignee from <span class="rev-old">{{ entry.oldValue || '—' }}</span> to <span class="rev-new">{{ entry.newValue || '—' }}</span>
+                </ng-container>
+                <ng-container *ngIf="entry.columnType?.toLowerCase() === 'status'">
+                  <span class="rev-author">{{ resolveUser(entry.authoredBy) }}</span> updated Status from <span class="rev-old">{{ entry.oldValue || '—' }}</span> → <span class="rev-new">{{ entry.newValue || '—' }}</span>
+                </ng-container>
+                <ng-container *ngIf="entry.columnType?.toLowerCase() !== 'assignee' && entry.columnType?.toLowerCase() !== 'status'">
+                  <span class="rev-author">{{ resolveUser(entry.authoredBy) }}</span> updated {{ entry.columnType }} from <span class="rev-old">{{ entry.oldValue || '—' }}</span> → <span class="rev-new">{{ entry.newValue || '—' }}</span>
+                </ng-container>
+              </span>
+              <span class="revision-date">{{ formatRevDate(entry.createdDate) }}</span>
+            </div>
+          </div>
+        </div>
+      </ng-container>
+
     </mat-dialog-content>
 
     <mat-dialog-actions align="end">
@@ -334,6 +372,18 @@ function buildEntries(
     .record-link:hover { color: #0d47a1; }
     .tags-row { display: flex; flex-wrap: wrap; gap: 6px; }
     .tag-capsule { background: #f0f0f0; color: #444; border-radius: 12px; padding: 2px 10px; font-size: 0.75rem; }
+
+    .revision-section { border-top: 2px solid #e0e0e0; }
+    .revision-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 24px 6px; font-size: 0.78rem; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+    .revision-scroll { max-height: 200px; overflow-y: auto; }
+    .revision-entry { display: flex; align-items: baseline; justify-content: space-between; padding: 8px 24px; border-bottom: 1px solid #f5f5f5; font-size: 0.82rem; color: #333; gap: 12px; }
+    .revision-entry:last-child { border-bottom: none; }
+    .revision-main { flex: 1; line-height: 1.6; }
+    .rev-author { font-weight: 600; color: #1a1a1a; }
+    .rev-old { color: #d32f2f; }
+    .rev-new { color: #2e7d32; }
+    .revision-date { font-size: 0.72rem; color: #aaa; white-space: nowrap; flex-shrink: 0; }
+    .revision-empty { padding: 14px 24px; font-size: 0.82rem; color: #aaa; }
   `],
 })
 export class RecordDetailDialogComponent implements OnInit {
@@ -353,6 +403,10 @@ export class RecordDetailDialogComponent implements OnInit {
   relatedTask = signal<Record<string, unknown> | null>(null);
   relatedBugs = signal<Record<string, unknown>[]>([]);
   loadingRelated = signal(false);
+
+  revisionHistory = signal<RevisionEntry[]>([]);
+  loadingRevisions = signal(false);
+  private userMap = new Map<string, string>();
 
   tagsValue = computed(() => {
     const raw = this.data.record['Tags'];
@@ -445,6 +499,34 @@ export class RecordDetailDialogComponent implements OnInit {
         this.loadingRelated.set(false);
       });
     }
+
+    if (this.recordType === 'bug' || this.recordType === 'task') {
+      const issueId = String(record['airtableId'] ?? '');
+      if (issueId) {
+        this.loadingRevisions.set(true);
+        forkJoin({
+          revisions: this.apiService.getCollectionData('revisionhistories', {
+            page: 1, limit: 200, search: '', filterField: 'issueId', filterValue: issueId,
+          }).pipe(catchError(() => of({ data: [], total: 0, fields: [] }))),
+          users: this.apiService.getCollectionData('users', {
+            page: 1, limit: 200, search: '',
+          }).pipe(catchError(() => of({ data: [], total: 0, fields: [] }))),
+        }).subscribe(({ revisions, users }) => {
+          for (const u of users.data) {
+            const uid = String(u['airtableId'] ?? '');
+            const name = String(u['name'] ?? u['email'] ?? '');
+            if (uid && name) this.userMap.set(uid, name);
+          }
+          const sorted = [...revisions.data].sort((a, b) => {
+            const da = new Date(String(a['createdDate'] ?? 0)).getTime();
+            const db = new Date(String(b['createdDate'] ?? 0)).getTime();
+            return db - da;
+          });
+          this.revisionHistory.set(sorted as unknown as RevisionEntry[]);
+          this.loadingRevisions.set(false);
+        });
+      }
+    }
   }
 
   label(key: string): string { return toLabel(key); }
@@ -466,5 +548,14 @@ export class RecordDetailDialogComponent implements OnInit {
       width: '600px',
       maxHeight: '80vh',
     });
+  }
+
+  resolveUser(userId: string): string {
+    return this.userMap.get(userId) || userId || 'Unknown';
+  }
+
+  formatRevDate(date: string): string {
+    const d = new Date(date);
+    return isNaN(d.getTime()) ? '—' : d.toLocaleString();
   }
 }

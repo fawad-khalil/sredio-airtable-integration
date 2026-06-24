@@ -1,30 +1,29 @@
-@import '@angular/material/prebuilt-themes/azure-blue.css';
+@import "@angular/material/prebuilt-themes/azure-blue.css";
 
-html, body {
+html,
+body {
   height: 100%;
   margin: 0;
   font-family: Roboto, "Helvetica Neue", sans-serif;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
 .ag-theme-quartz {
   --ag-header-background-color: #1565c0;
   --ag-header-foreground-color: #ffffff;
-  --ag-border-color: #e0e0e0;
   --ag-row-hover-color: #e3f2fd;
-  --ag-row-height: 52px;
+  --ag-row-height: 50px;
+  --ag-header-height: 48px;
+  --ag-row-border-color: #125f96;
   --ag-cell-horizontal-padding: 16px;
   --ag-font-size: 13px;
-  --ag-header-height: 48px;
 }
 
 .ag-theme-quartz .ag-row {
   cursor: pointer;
-}
-
-.ag-theme-quartz .ag-row-odd {
-  background-color: #fafafa;
 }
 
 .ag-tooltip {

@@ -1,16 +1,14 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpHeaders, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { environment } from '../../environments/environment';
-
 export interface Collection { name: string; count: number; }
 export interface CollectionData { data: Record<string, unknown>[]; total: number; fields: string[]; }
 export interface SyncStatus { bases: number; tables: number; tickets: number; users: number; lastSync: string | null; syncing: boolean; }
-export interface ScraperStatus { state: string; progress: { current: number; total: number }; message: string; hasCookies: boolean; }
+export interface ScraperStatus { state: string; progress: { current: number; total: number }; message: string; hasCookies: boolean; mfaPrompts?: number; }
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
-  private readonly api = environment.apiUrl;
+  private readonly api = import.meta.env['NG_APP_API_URL'];
 
   constructor(private readonly http: HttpClient) {}
 
@@ -36,11 +34,13 @@ export class ApiService {
   }
 
   getScraperStatus(): Observable<ScraperStatus> {
-    return this.http.get<ScraperStatus>(`${this.api}/scraper/status`);
+    return this.http.get<ScraperStatus>(`${this.api}/scraper/status`, this.connHeaders);
   }
 
-  startScraper(): Observable<{ message: string }> {
-    return this.http.post<{ message: string }>(`${this.api}/scraper/start`, {}, this.connHeaders);
+  startScraper(
+    payload: { method: string; email?: string; password?: string } = { method: 'browser' },
+  ): Observable<{ message: string }> {
+    return this.http.post<{ message: string }>(`${this.api}/scraper/start`, payload, this.connHeaders);
   }
 
   submitMfaCode(code: string): Observable<{ message: string }> {
@@ -48,11 +48,11 @@ export class ApiService {
   }
 
   setCookies(cookies: string): Observable<{ message: string }> {
-    return this.http.post<{ message: string }>(`${this.api}/scraper/cookies`, { cookies });
+    return this.http.post<{ message: string }>(`${this.api}/scraper/cookies`, { cookies }, this.connHeaders);
   }
 
   getCollections(): Observable<Collection[]> {
-    return this.http.get<Collection[]>(`${this.api}/collections`, this.connHeaders);
+    return this.http.get<Collection[]>(`${this.api}/collections`);
   }
 
   getCollectionData(
@@ -67,7 +67,7 @@ export class ApiService {
     if (params.filterValue) httpParams = httpParams.set('filterValue', params.filterValue);
     return this.http.get<CollectionData>(
       `${this.api}/collections/${name}`,
-      { ...this.connHeaders, params: httpParams },
+      { params: httpParams },
     );
   }
 }

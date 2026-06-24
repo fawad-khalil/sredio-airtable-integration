@@ -8,14 +8,14 @@ const INTERNAL_COLLECTIONS = new Set(['oauthtokens', 'system.views']);
 export class CollectionsService {
   constructor(@InjectConnection() private readonly connection: Connection) {}
 
-  async listCollections(connectionId: string): Promise<{ name: string; count: number }[]> {
+  async listCollections(): Promise<{ name: string; count: number }[]> {
     const collections = await this.connection.db.listCollections().toArray();
     const results = await Promise.all(
       collections
         .filter(c => !c.name.startsWith('system.') && !INTERNAL_COLLECTIONS.has(c.name))
         .map(async c => ({
           name: c.name,
-          count: await this.connection.db.collection(c.name).countDocuments(connectionId ? { connectionId } : {}),
+          count: await this.connection.db.collection(c.name).countDocuments({}),
         })),
     );
     return results;
@@ -26,14 +26,13 @@ export class CollectionsService {
     page = 1,
     limit = 100,
     search = '',
-    connectionId = '',
     filterField = '',
     filterValue = '',
   ): Promise<{ data: Record<string, unknown>[]; total: number; fields: string[] }> {
     const collection = this.connection.db.collection(name);
     const skip = (page - 1) * limit;
 
-    const baseFilter: Record<string, unknown> = connectionId ? { connectionId } : {};
+    const baseFilter: Record<string, unknown> = {};
     if (filterField && filterValue) baseFilter[filterField] = filterValue;
 
     let query: Record<string, unknown>;

@@ -1,6 +1,6 @@
 import { Component, OnInit, OnDestroy, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule, ReactiveFormsModule, FormControl } from '@angular/forms';
+import { ReactiveFormsModule, FormControl } from '@angular/forms';
 import { Router, ActivatedRoute } from '@angular/router';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatSelectModule } from '@angular/material/select';
@@ -9,12 +9,9 @@ import { MatInputModule } from '@angular/material/input';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
-import { MatProgressBarModule } from '@angular/material/progress-bar';
-import { MatCardModule } from '@angular/material/card';
-import { MatDividerModule } from '@angular/material/divider';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { MatDialog, MatDialogModule } from '@angular/material/dialog';
+import { MatDialog, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { AgGridAngular } from 'ag-grid-angular';
 import {
   ColDef,
@@ -25,7 +22,6 @@ import {
   RowClickedEvent,
 } from 'ag-grid-community';
 import { Subject, Subscription, interval } from 'rxjs';
-import { environment } from '../../environments/environment';
 import {
   debounceTime,
   distinctUntilChanged,
@@ -39,6 +35,9 @@ import {
   ScraperStatus,
 } from '../services/api.service';
 import { RecordDetailDialogComponent } from './record-detail-dialog.component';
+import { ScraperLoginDialogComponent, ScraperLoginResult } from './scraper-login-dialog.component';
+import { MfaDialogComponent } from './mfa-dialog.component';
+import { SyncPanelComponent } from './sync-panel.component';
 
 interface BreadcrumbItem {
   label: string;
@@ -57,14 +56,39 @@ function toHeaderName(field: string): string {
     .trim();
 }
 
-const COLLECTION_SKIP: Record<string, string[]> = {
-  bases: ['permissionLevel'],
-  tables: ['fields'],
-  users: ['name'],
+const STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
+  'to do': { bg: '#eceff1', fg: '#455a64' },
+  'not started': { bg: '#eceff1', fg: '#455a64' },
+  'in progress': { bg: '#fff3e0', fg: '#e65100' },
+  'in review': { bg: '#ede7f6', fg: '#5e35b1' },
+  'blocked': { bg: '#ffebee', fg: '#c62828' },
+  'done': { bg: '#e8f5e9', fg: '#2e7d32' },
 };
 
-function buildColDefs(fields: string[], extraSkip: string[] = []): ColDef[] {
-  const skip = new Set(['__v', '_id', 'baseId', 'tableId', 'airtableId', 'connectionId', 'createdAt', 'updatedAt', ...extraSkip]);
+function escapeHtml(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[
+        c
+      ]!,
+  );
+}
+
+function statusCellRenderer(params: any): string {
+  const v = params.value;
+  if (v === null || v === undefined || v === '') return '';
+  const c = STATUS_COLORS[String(v).toLowerCase()] ?? { bg: '#eceff1', fg: '#37474f' };
+  return (
+    `<span style="display:inline-block;padding:2px 10px;border-radius:12px;` +
+    `font-size:0.75rem;font-weight:600;line-height:1.6;` +
+    `background:${c.bg};color:${c.fg};">${escapeHtml(String(v))}</span>`
+  );
+}
+
+function buildColDefs(fields: string[]): ColDef[] {
+  // Show airtableId + all Airtable fields; hide Mongo internals only.
+  const skip = new Set(['_id', '__v', 'baseId', 'tableId', 'createdAt', 'updatedAt', 'syncedAt']);
   return fields
     .filter((f) => !skip.has(f))
     .map((field) => ({
@@ -75,13 +99,14 @@ function buildColDefs(fields: string[], extraSkip: string[] = []): ColDef[] {
       resizable: true,
       minWidth: 100,
       flex: 1,
-      tooltipValueGetter: (p: any) => {
+      ...(field === 'Status' ? { cellRenderer: statusCellRenderer } : {}),
+      tooltipValueGetter: (p: { value: any }) => {
         const v = p.value;
         return typeof v === 'object' && v !== null
           ? JSON.stringify(v)
           : String(v ?? '');
       },
-      valueFormatter: (p: any) => {
+      valueFormatter: (p: { value:any }) => {
         const v = p.value;
         if (v === null || v === undefined) return '';
         if (typeof v === 'object') return JSON.stringify(v);
@@ -90,122 +115,11 @@ function buildColDefs(fields: string[], extraSkip: string[] = []): ColDef[] {
     }));
 }
 
-function formatTicketDate(val: unknown): string {
-  if (typeof val !== 'string') return String(val ?? '—');
-  const d = new Date(val);
-  return /^\d{4}-\d{2}-\d{2}T/.test(val) && !isNaN(d.getTime())
-    ? d.toLocaleString() : (val || '—');
-}
-
-function buildTicketColDefs(): ColDef[] {
-  return [
-    {
-      colId: 'nameTitle',
-      headerName: 'Name / Title',
-      sortable: true,
-      filter: true,
-      resizable: true,
-      flex: 2,
-      minWidth: 180,
-      valueGetter: (p: any) =>
-        p.data?.['Name'] ?? p.data?.['Title'] ?? p.data?.['Summary'] ?? '—',
-      cellRenderer: (p: any) => {
-        const tn = String(p.data?.tableName ?? '').toLowerCase();
-        const color = tn.includes('bug') ? '#d32f2f'
-          : tn.includes('task') ? '#1565c0' : 'transparent';
-        const name = String(p.value ?? '—');
-        return `<span style="display:flex;align-items:center;gap:8px;height:100%">` +
-          `<span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></span>` +
-          `<span>${name}</span></span>`;
-      },
-    },
-    {
-      colId: 'prioritySeverity',
-      headerName: 'Priority / Severity',
-      sortable: true,
-      filter: true,
-      resizable: true,
-      flex: 1,
-      minWidth: 140,
-      valueGetter: (p: any) => p.data?.['Priority'] ?? p.data?.['Severity'] ?? '—',
-      valueFormatter: (p: any) => String(p.value ?? '—'),
-    },
-    {
-      colId: 'assignee',
-      headerName: 'Assignee',
-      sortable: true,
-      filter: true,
-      resizable: true,
-      flex: 1,
-      minWidth: 140,
-      valueGetter: (p: any) => {
-        const v = p.data?.['Assignee'];
-        if (typeof v !== 'object' || v === null) return String(v ?? '');
-        return String((v as any)['name'] ?? (v as any)['email'] ?? '');
-      },
-      valueFormatter: (p: any) => (p.value as string) || '—',
-    },
-    {
-      field: 'Status',
-      headerName: 'Status',
-      sortable: true,
-      filter: true,
-      resizable: true,
-      flex: 1,
-      minWidth: 100,
-      valueFormatter: (p: any) => String(p.value ?? '—'),
-    },
-    {
-      colId: 'createdAt',
-      headerName: 'Created At',
-      sortable: true,
-      filter: 'agDateColumnFilter',
-      filterParams: {
-        comparator: (filterDate: Date, cellValue: string | null) => {
-          if (!cellValue) return -1;
-          const d = new Date(cellValue);
-          if (isNaN(d.getTime())) return -1;
-          const cell = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-          const filt = new Date(filterDate.getFullYear(), filterDate.getMonth(), filterDate.getDate());
-          return cell < filt ? -1 : cell > filt ? 1 : 0;
-        },
-      },
-      resizable: true,
-      flex: 1,
-      minWidth: 160,
-      valueGetter: (p: any) => p.data?.['Created Time'] ?? p.data?.['Created Date'] ?? null,
-      valueFormatter: (p: any) => formatTicketDate(p.value),
-    },
-    {
-      colId: 'updatedAt',
-      headerName: 'Updated At',
-      sortable: true,
-      filter: 'agDateColumnFilter',
-      filterParams: {
-        comparator: (filterDate: Date, cellValue: string | null) => {
-          if (!cellValue) return -1;
-          const d = new Date(cellValue);
-          if (isNaN(d.getTime())) return -1;
-          const cell = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-          const filt = new Date(filterDate.getFullYear(), filterDate.getMonth(), filterDate.getDate());
-          return cell < filt ? -1 : cell > filt ? 1 : 0;
-        },
-      },
-      resizable: true,
-      flex: 1,
-      minWidth: 160,
-      valueGetter: (p: any) => p.data?.['Last Modified Time'] ?? p.data?.['Updated At'] ?? null,
-      valueFormatter: (p: any) => formatTicketDate(p.value),
-    },
-  ];
-}
-
 @Component({
   selector: 'app-dashboard',
   standalone: true,
   imports: [
     CommonModule,
-    FormsModule,
     ReactiveFormsModule,
     MatToolbarModule,
     MatSelectModule,
@@ -214,13 +128,12 @@ function buildTicketColDefs(): ColDef[] {
     MatButtonModule,
     MatIconModule,
     MatProgressSpinnerModule,
-    MatProgressBarModule,
-    MatCardModule,
-    MatDividerModule,
     MatSnackBarModule,
     MatTooltipModule,
     MatDialogModule,
     AgGridAngular,
+    MfaDialogComponent,
+    SyncPanelComponent,
   ],
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.scss',
@@ -239,8 +152,15 @@ export class DashboardComponent implements OnInit, OnDestroy {
   showSyncPanel = signal(false);
   syncStatus = signal<SyncStatus | null>(null);
   scraperStatus = signal<ScraperStatus | null>(null);
-  mfaCode = signal('');
-  cookieString = signal('');
+  loginMethod = signal<'credentials' | 'browser'>('credentials');
+
+  // Proxy for the sync panel's two-way [(loginMethod)] binding over the signal.
+  get loginMethodValue(): 'credentials' | 'browser' {
+    return this.loginMethod();
+  }
+  set loginMethodValue(value: 'credentials' | 'browser') {
+    this.loginMethod.set(value);
+  }
   breadcrumb = signal<BreadcrumbItem[]>([]);
   activeFilter = signal<{ field: string; value: string } | null>(null);
 
@@ -252,6 +172,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
   private destroy$ = new Subject<void>();
   private scraperPoll?: Subscription;
   private syncPoll?: Subscription;
+  private mfaDialogRef: MatDialogRef<MfaDialogComponent> | null = null;
+  private mfaPromptSeen = 0;
 
   rowStyleFn = (params: any): Record<string, string> => {
     const vals = Object.values(params.data ?? {});
@@ -316,6 +238,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.destroy$.next();
     this.destroy$.complete();
     this.stopPolling();
+    this.mfaDialogRef?.close();
   }
 
   onGridReady(event: GridReadyEvent): void {
@@ -356,7 +279,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       })
       .subscribe({
         next: (result) => {
-          this.colDefs.set(name === 'tickets' ? buildTicketColDefs() : buildColDefs(result.fields, COLLECTION_SKIP[name] ?? []));
+          this.colDefs.set(buildColDefs(result.fields));
           this.rowData.set(result.data);
           this.totalRecords.set(result.total);
           this.loading.set(false);
@@ -374,6 +297,14 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return Math.ceil(this.totalRecords() / this.pageSize());
   }
 
+  get rangeStart(): number {
+    return this.totalRecords() === 0 ? 0 : (this.currentPage() - 1) * this.pageSize() + 1;
+  }
+
+  get rangeEnd(): number {
+    return Math.min(this.currentPage() * this.pageSize(), this.totalRecords());
+  }
+
   prevPage(): void {
     if (this.currentPage() > 1) {
       this.currentPage.update((p) => p - 1);
@@ -389,7 +320,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   connectAirtable(): void {
-    window.location.href = `${environment.apiUrl}/auth/airtable/connect`;
+    window.location.href = `${import.meta.env['NG_APP_API_URL']}/auth/airtable/connect`;
   }
 
   startSync(): void {
@@ -415,14 +346,32 @@ export class DashboardComponent implements OnInit, OnDestroy {
           this.syncStatus.set(s);
           if (!s.syncing) {
             this.syncPoll?.unsubscribe();
-            if (s.lastSync) this.loadCollections();
+            if (s.lastSync) {
+              this.loadCollections();
+              if (this.selectedCollection()) this.loadCollectionData();
+            }
           }
         },
+        error: () => {},
       });
   }
 
   startScraper(): void {
-    this.apiService.startScraper().subscribe({
+    if (this.loginMethod() === 'credentials') {
+      this.dialog
+        .open(ScraperLoginDialogComponent, { width: '400px' })
+        .afterClosed()
+        .subscribe((creds: ScraperLoginResult | undefined) => {
+          if (!creds) return; // cancelled
+          this.runScraper({ method: 'credentials', email: creds.email, password: creds.password });
+        });
+    } else {
+      this.runScraper({ method: 'browser' });
+    }
+  }
+
+  private runScraper(payload: { method: string; email?: string; password?: string }): void {
+    this.apiService.startScraper(payload).subscribe({
       next: () => {
         this.snackBar.open('Scraper started!', 'Close', { duration: 2000 });
         this.startScraperPolling();
@@ -444,50 +393,39 @@ export class DashboardComponent implements OnInit, OnDestroy {
       .subscribe({
         next: (s) => {
           this.scraperStatus.set(s);
+
+          if (s.state === 'awaiting_mfa' && !this.mfaDialogRef) {
+            this.mfaPromptSeen = s.mfaPrompts ?? 1;
+            this.mfaDialogRef = this.dialog.open(MfaDialogComponent, {
+              width: '400px',
+              disableClose: true,
+            });
+            this.mfaDialogRef.afterClosed().subscribe(() => {
+              this.mfaDialogRef = null;
+            });
+          } else if (s.state === 'awaiting_mfa' && this.mfaDialogRef && (s.mfaPrompts ?? 1) > this.mfaPromptSeen) {
+            // Backend re-prompted → the previously submitted code was rejected.
+            this.mfaPromptSeen = s.mfaPrompts ?? 1;
+            this.mfaDialogRef.componentInstance?.markRejected();
+          }
+
+          if (s.state !== 'awaiting_mfa' && this.mfaDialogRef) {
+            this.mfaDialogRef.close();
+          }
+
           if (s.state === 'complete' || s.state === 'error') {
             this.scraperPoll?.unsubscribe();
+            if (s.state === 'error') {
+              this.snackBar.open(s.message || 'Scraper failed', 'Close', { duration: 6000 });
+            } else {
+              this.snackBar.open(s.message || 'Scrape complete', 'Close', { duration: 4000 });
+            }
           }
         },
       });
   }
 
-  submitCookies(): void {
-    const cookies = this.cookieString();
-    if (!cookies) return;
-    this.apiService.setCookies(cookies).subscribe({
-      next: () => {
-        this.cookieString.set('');
-        this.snackBar.open(
-          'Cookies saved! You can now start scraping.',
-          'Close',
-          { duration: 3000 },
-        );
-        this.apiService.getScraperStatus().subscribe({
-          next: (s) => this.scraperStatus.set(s),
-          error: () => {},
-        });
-      },
-      error: () =>
-        this.snackBar.open('Failed to save cookies', 'Close', {
-          duration: 3000,
-        }),
-    });
-  }
 
-  submitMfa(): void {
-    const code = this.mfaCode();
-    if (!code) return;
-    this.apiService.submitMfaCode(code).subscribe({
-      next: () => {
-        this.mfaCode.set('');
-        this.snackBar.open('MFA code submitted!', 'Close', { duration: 2000 });
-      },
-      error: () =>
-        this.snackBar.open('Failed to submit MFA code', 'Close', {
-          duration: 3000,
-        }),
-    });
-  }
 
   onRowClicked(event: RowClickedEvent): void {
     const row = event.data as Record<string, unknown>;
@@ -526,7 +464,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   formatCollection(name: string): string {
     const map: Record<string, string> = {
       bases: 'Bases', tables: 'Tables', tickets: 'Tickets',
-      users: 'Users', revisionhistories: 'Revision History',
+      users: 'Users', revisionhistories: 'Revision Histories',
     };
     return map[name] ?? (name.charAt(0).toUpperCase() + name.slice(1));
   }

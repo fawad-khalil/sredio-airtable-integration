@@ -19,7 +19,7 @@
       "prefix": "app",
       "architect": {
         "build": {
-          "builder": "@angular-devkit/build-angular:application",
+          "builder": "@ngx-env/builder:application",
           "options": {
             "outputPath": "dist/frontend",
             "index": "src/index.html",
@@ -36,9 +36,9 @@
               }
             ],
             "styles": [
-              "src/styles.scss",
               "node_modules/ag-grid-community/styles/ag-grid.css",
-              "node_modules/ag-grid-community/styles/ag-theme-quartz.css"
+              "node_modules/ag-grid-community/styles/ag-theme-quartz.css",
+              "src/styles.scss"
             ],
             "scripts": []
           },
@@ -67,7 +67,7 @@
           "defaultConfiguration": "production"
         },
         "serve": {
-          "builder": "@angular-devkit/build-angular:dev-server",
+          "builder": "@ngx-env/builder:dev-server",
           "configurations": {
             "production": {
               "buildTarget": "frontend:build:production"

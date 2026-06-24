@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import axios from 'axios';
@@ -25,7 +25,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 @Injectable()
-export class SyncService {
+export class SyncService implements OnModuleInit {
   private readonly logger = new Logger(SyncService.name);
   private readonly syncStatuses = new Map<string, SyncStatusEntry>();
 
@@ -36,6 +36,17 @@ export class SyncService {
     @InjectModel(Ticket.name) private ticketModel: Model<TicketDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    // Resilient: a leftover duplicate from the old per-connection scheme must not crash startup.
+    await Promise.all(
+      [this.baseModel, this.tableModel, this.ticketModel, this.userModel].map(m =>
+        m.syncIndexes().catch((err: Error) =>
+          this.logger.warn(`syncIndexes failed for ${m.modelName}: ${err.message} (drop the collection to rebuild the unique index)`),
+        ),
+      ),
+    );
+  }
 
   private getStatus(connectionId: string): SyncStatusEntry {
     if (!this.syncStatuses.has(connectionId)) {
@@ -77,8 +88,8 @@ export class SyncService {
 
     for (const base of allBases) {
       await this.baseModel.updateOne(
-        { airtableId: base.id, connectionId },
-        { $set: { airtableId: base.id, connectionId, name: base.name, permissionLevel: base.permissionLevel, syncedAt: new Date() } },
+        { airtableId: base.id },
+        { $set: { airtableId: base.id, name: base.name, permissionLevel: base.permissionLevel, syncedAt: new Date() } },
         { upsert: true },
       );
     }
@@ -99,8 +110,8 @@ export class SyncService {
 
     for (const table of tables) {
       await this.tableModel.updateOne(
-        { airtableId: table.id, connectionId },
-        { $set: { airtableId: table.id, connectionId, baseId, name: table.name, fields: table.fields ?? [], syncedAt: new Date() } },
+        { airtableId: table.id },
+        { $set: { airtableId: table.id, baseId, name: table.name, fields: table.fields ?? [], syncedAt: new Date() } },
         { upsert: true },
       );
     }
@@ -121,14 +132,16 @@ export class SyncService {
     do {
       const params: Record<string, string> = { pageSize: '100' };
       if (offset) params.offset = offset;
+      console.log('Requesting tickets with params:', { params, tableId, baseId }, );
       const { data } = await axios.get(`${AIRTABLE_BASE}/${baseId}/${tableId}`, { headers: h, params });
       const records: any[] = data.records ?? [];
+      console.log('Retrieved tickets count: ', records.length);
 
       if (records.length > 0) {
         const ops = records.map(r => ({
           updateOne: {
-            filter: { airtableId: r.id, connectionId },
-            update: { $set: { airtableId: r.id, connectionId, baseId, tableId, tableName, fields: r.fields ?? {}, syncedAt: new Date() } },
+            filter: { airtableId: r.id },
+            update: { $set: { airtableId: r.id, baseId, tableId, tableName, fields: r.fields ?? {}, syncedAt: new Date() } },
             upsert: true,
           },
         }));
@@ -150,8 +163,8 @@ export class SyncService {
       const h = await this.headers(connectionId);
       const { data } = await axios.get(`${AIRTABLE_BASE}/meta/whoami`, { headers: h });
       await this.userModel.updateOne(
-        { airtableId: data.id, connectionId },
-        { $set: { airtableId: data.id, connectionId, email: data.email ?? '', name: data.name ?? data.email ?? 'Unknown', syncedAt: new Date() } },
+        { airtableId: data.id },
+        { $set: { airtableId: data.id, email: data.email ?? '', name: data.name ?? data.email ?? 'Unknown', syncedAt: new Date() } },
         { upsert: true },
       );
       this.getStatus(connectionId).users = 1;
