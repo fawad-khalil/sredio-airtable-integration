@@ -85,7 +85,7 @@ export class AuthService {
   }
 
   private getRedirectUri(): string {
-    const port = this.config.get<number>('PORT', 3000);
+    const port = this.config.get<number>('PORT', 3005);
     const backendUrl = this.config.get('BACKEND_URL', `http://localhost:${port}`);
     return `${backendUrl}/auth/airtable/callback`;
   }
